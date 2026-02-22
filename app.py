@@ -2,12 +2,28 @@ import streamlit as st
 import akshare as ak
 import time
 import pandas as pd
+import json
+import os
+
+STOCK_FILE = "stock_data.json"
 
 st.title("A股实时监控")
 
+# Function to save stock symbols to file
+def save_stock_symbols(symbols):
+    with open(STOCK_FILE, 'w') as f:
+        json.dump(symbols, f)
+
+# Function to load stock symbols from file
+def load_stock_symbols():
+    if os.path.exists(STOCK_FILE):
+        with open(STOCK_FILE, 'r') as f:
+            return json.load(f)
+    return ["000001", "600000"]  # Default symbols
+
 # Initialize session state for stock symbols if not exists
 if 'stock_symbols' not in st.session_state:
-    st.session_state.stock_symbols = ["000001", "600000"]
+    st.session_state.stock_symbols = load_stock_symbols()
 
 # Function to add new stock symbols
 def add_stock():
@@ -16,6 +32,7 @@ def add_stock():
         if symbol and symbol not in st.session_state.stock_symbols:
             st.session_state.stock_symbols.append(symbol)
     st.session_state.new_stock_input = ""  # Clear input after adding
+    save_stock_symbols(st.session_state.stock_symbols)  # Save to file
 
 # Function to remove selected stock symbols
 def remove_selected_stocks():
@@ -28,6 +45,7 @@ def remove_selected_stocks():
     # Clear stock data if all stocks are removed
     if not st.session_state.stock_symbols:
         st.session_state.stock_data = pd.DataFrame()
+    save_stock_symbols(st.session_state.stock_symbols)  # Save to file
 
 # 缓存股票数据以提高性能
 @st.cache_data(ttl=60)  # 缓存60秒
