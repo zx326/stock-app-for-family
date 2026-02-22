@@ -25,6 +25,9 @@ def remove_selected_stocks():
             st.session_state.stock_symbols.remove(symbol)
     # Reset selections
     st.session_state.selections = {symbol: False for symbol in st.session_state.stock_symbols}
+    # Clear stock data if all stocks are removed
+    if not st.session_state.stock_symbols:
+        st.session_state.stock_data = pd.DataFrame()
 
 # 缓存股票数据以提高性能
 @st.cache_data(ttl=60)  # 缓存60秒
@@ -122,7 +125,7 @@ with st.sidebar:
         selected_count = sum(st.session_state.selections.values())
         if st.button(f"删除选中的 {selected_count} 只股票"):
             remove_selected_stocks()
-            st.experimental_rerun()
+            st.rerun()
 
 # Main content area
 st.header("当前监控的股票")
@@ -132,6 +135,8 @@ if st.button("刷新数据") or 'stock_data' not in st.session_state:
     st.session_state.stock_data = get_stock_data_with_progress(st.session_state.stock_symbols)
 
 # Display the dataframe with only required columns
-if 'stock_data' in st.session_state:
+if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
     display_columns = ["代码", "名称", "最新价", "历史最低", "相对历史低位"]
     st.dataframe(st.session_state.stock_data[display_columns])
+else:
+    st.write("暂无股票数据，请添加股票代码。")
