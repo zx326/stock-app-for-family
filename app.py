@@ -81,27 +81,22 @@ def retry_on_failure(max_retries=3, delay=1):
 @retry_on_failure(max_retries=3, delay=2)
 def fetch_stock_data(symbol):
     try:
-        # 设置请求头模拟浏览器访问
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        # 获取股票基本信息
+        # 获取股票基本信息 - 移除headers参数
         try:
-            stock_info_df = ak.stock_individual_info_em(symbol=symbol, headers=headers)
+            stock_info_df = ak.stock_individual_info_em(symbol=symbol)
             stock_name = stock_info_df[stock_info_df['item'] == '股票简称']['value'].values[0]
         except Exception as e:
             logger.warning(f"Failed to get stock info for {symbol}: {e}")
-            stock_name = "未知"
+            stock_name = f"{symbol}(未知)"
         
         # 获取历史行情数据
         try:
-            # 添加超时设置
+            # 添加超时设置和更详细的错误处理
             stock_hist = ak.stock_zh_a_hist(
                 symbol=symbol, 
                 period="daily", 
                 adjust="qfq",
-                timeout=10  # 10秒超时
+                timeout=15  # 增加到15秒超时
             )
             if not stock_hist.empty:
                 latest_data = stock_hist.iloc[-1]
@@ -121,12 +116,21 @@ def fetch_stock_data(symbol):
                 }
         except Exception as e:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
+            error_msg = str(e)
+            # 根据不同错误类型提供更具体的错误信息
+            if "timeout" in error_msg.lower() or "time out" in error_msg.lower():
+                error_detail = "网络超时"
+            elif "not found" in error_msg.lower() or "不存在" in error_msg:
+                error_detail = "股票代码不存在"
+            else:
+                error_detail = "网络连接异常"
+                
             return {
                 "代码": symbol, 
                 "名称": stock_name,
-                "最新价": f"行情错误:{str(e)}", 
-                "历史最低": "行情错误",
-                "相对历史低位": "行情错误"
+                "最新价": f"行情错误:{error_detail}", 
+                "历史最低": f"行情错误:{error_detail}",
+                "相对历史低位": f"行情错误:{error_detail}"
             }
         
         return {
@@ -140,7 +144,7 @@ def fetch_stock_data(symbol):
         logger.error(f"Unexpected error for {symbol}: {e}")
         return {
             "代码": symbol, 
-            "名称": f"基础信息错误:{str(e)}",
+            "名称": f"{symbol}(处理错误)",
             "最新价": "Error", 
             "历史最低": "Error",
             "相对历史低位": "Error"
