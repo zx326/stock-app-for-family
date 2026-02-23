@@ -4,6 +4,45 @@ import time
 import pandas as pd
 import json
 import os
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+from functools import lru_cache
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+
+# Remove Redis cache setup
+# cache = redis.Redis(host='localhost', port=6379, db=0)
+
+# API endpoint for stock data
+STOCK_API_URL = "https://api.example.com/stock/"
+
+@lru_cache(maxsize=128)
+def fetch_stock_data_cached(symbol):
+    """Fetch stock data with built-in caching"""
+    try:
+        response = requests.get(f"{STOCK_API_URL}{symbol}", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"Fetched data for {symbol}")
+            return symbol, data
+        else:
+            logger.error(f"Failed to fetch data for {symbol}: HTTP {response.status_code}")
+            return symbol, None
+    except Exception as e:
+        logger.error(f"Error fetching data for {symbol}: {e}")
+        return symbol, None
+
+def fetch_stock_data_sync(symbol):
+    """Fetch stock data synchronously with caching"""
+    return fetch_stock_data_cached(symbol)
+
+
+
 
 STOCK_FILE = "stock_data.json"
 
@@ -101,15 +140,43 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# 获取所有股票数据并显示进度条
+# 获取所有股票数据并显示进度条 - 改进版本
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
+    status_text = st.empty()
     total = len(symbols)
-    for i, symbol in enumerate(symbols):
-        data.append(fetch_stock_data(symbol))
-        progress_bar.progress((i + 1) / total)
+    
+    # Use ThreadPoolExecutor for concurrent data fetching
+    with ThreadPoolExecutor(max_workers=min(len(symbols), 10)) as executor:
+        # Submit all tasks
+        future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol 
+                          for symbol in symbols}
+        
+        # Process completed tasks as they finish
+        completed = 0
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                result = future.result(timeout=30)  # 30 second timeout per task
+                data.append(result)
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
+                # Add error entry
+                data.append({
+                    "代码": symbol,
+                    "名称": "处理错误",
+                    "最新价": "Error",
+                    "历史最低": "Error", 
+                    "相对历史低位": "Error"
+                })
+            
+            completed += 1
+            progress_bar.progress(completed / total)
+            status_text.text(f"已处理 {completed}/{total} 只股票")
+    
     progress_bar.empty()
+    status_text.empty()
     return pd.DataFrame(data)
 
 # 初始化选择状态
