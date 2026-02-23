@@ -5,21 +5,15 @@ import pandas as pd
 import json
 import os
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
-from functools import lru_cache
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add a configuration check
-def check_environment():
-    # Removed STOCK_API_URL requirement since it's not actually used in the code
-    pass
+# Remove environment check function since STOCK_API_URL is not used
 
 # Call the check at the beginning
-check_environment()
 
 STOCK_FILE = "stock_data.json"
 
@@ -63,8 +57,7 @@ def remove_selected_stocks():
         st.session_state.stock_data = pd.DataFrame()
     save_stock_symbols(st.session_state.stock_symbols)  # Save to file
 
-# 缓存股票数据以提高性能
-@st.cache_data(ttl=60)  # 缓存60秒
+# Remove @st.cache_data decorator for better deployment compatibility
 def fetch_stock_data(symbol):
     try:
         # 获取股票基本信息
@@ -121,49 +114,39 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# 获取所有股票数据并显示进度条
+# Simplified data fetching without threading for better deployment compatibility
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(symbols)
     
-    # Limit concurrent requests to avoid overwhelming the server
-    max_workers = min(len(symbols), 5)  # Reduced from 10 to 5
-    
-    # Use ThreadPoolExecutor for concurrent data fetching
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol 
-                          for symbol in symbols}
+    # Process stocks sequentially instead of using threads
+    for i, symbol in enumerate(symbols):
+        try:
+            result = fetch_stock_data(symbol)
+            data.append(result)
+        except Exception as e:
+            logger.error(f"Error processing {symbol}: {e}")
+            # Add error entry
+            data.append({
+                "代码": symbol,
+                "名称": "处理错误",
+                "最新价": "Error",
+                "历史最低": "Error", 
+                "相对历史低位": "Error"
+            })
         
-        # Process completed tasks as they finish
-        completed = 0
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                result = future.result(timeout=30)  # 30 second timeout per task
-                data.append(result)
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
-                # Add error entry
-                data.append({
-                    "代码": symbol,
-                    "名称": "处理错误",
-                    "最新价": "Error",
-                    "历史最低": "Error", 
-                    "相对历史低位": "Error"
-                })
-            
-            completed += 1
-            progress_bar.progress(completed / total)
-            status_text.text(f"已处理 {completed}/{total} 只股票")
+        # Update progress
+        progress = (i + 1) / total
+        progress_bar.progress(progress)
+        status_text.text(f"已处理 {i + 1}/{total} 只股票")
     
     progress_bar.empty()
     status_text.empty()
     return pd.DataFrame(data)
 
-# 初始化选择状态
+# Initialize selection state
 if 'selections' not in st.session_state:
     st.session_state.selections = {symbol: False for symbol in st.session_state.stock_symbols}
 
