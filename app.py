@@ -10,6 +10,7 @@ from functools import wraps
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from datetime import datetime, timedelta
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -152,31 +153,36 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# Optimized data fetching with improved concurrency
+# 添加缓存机制
+@st.cache_data(ttl=300)  # 5分钟缓存
+def cached_fetch_stock_data(symbol):
+    return fetch_stock_data(symbol)
+
+# 修改并发处理函数
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(symbols)
     
-    # Reduce concurrent workers to prevent overwhelming the API
-    max_workers = min(3, len(symbols))  # Reduced from 10 to 3
+    # 进一步减少并发数以适应云端环境
+    max_workers = min(2, len(symbols))  # 从3减少到2
     
-    # Use ThreadPoolExecutor for concurrent processing
+    # 使用缓存版本的函数
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol for symbol in symbols}
+        # 提交所有任务
+        future_to_symbol = {executor.submit(cached_fetch_stock_data, symbol): symbol for symbol in symbols}
         
-        # Process completed tasks as they finish
+        # 处理完成的任务
         completed = 0
         for future in as_completed(future_to_symbol):
             symbol = future_to_symbol[future]
             try:
-                result = future.result(timeout=45)  # Increased timeout to 45 seconds per stock
+                result = future.result(timeout=60)  # 增加超时到60秒
                 data.append(result)
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}")
-                # Add error entry
+                # 添加错误条目
                 data.append({
                     "代码": symbol,
                     "名称": "处理错误",
@@ -185,11 +191,14 @@ def get_stock_data_with_progress(symbols):
                     "相对历史低位": "Error"
                 })
             
-            # Update progress
+            # 更新进度
             completed += 1
             progress = completed / total
             progress_bar.progress(progress)
             status_text.text(f"已处理 {completed}/{total} 只股票")
+            
+            # 在每次请求间添加延迟以避免API限制
+            time.sleep(0.5)
     
     progress_bar.empty()
     status_text.empty()
@@ -228,23 +237,28 @@ with st.sidebar:
             remove_selected_stocks()
             st.rerun()
 
-# Main content area
+# 主内容区域
 st.header("当前监控的股票")
 
-# Get and display stock data
+# 获取并显示股票数据
 if st.button("刷新数据") or 'stock_data' not in st.session_state:
     with st.spinner("正在获取股票数据..."):
         try:
+            # 先尝试使用缓存数据
+            if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
+                st.info("显示缓存数据...")
+                time.sleep(1)  # 给用户一些反馈时间
+            
             st.session_state.stock_data = get_stock_data_with_progress(st.session_state.stock_symbols)
             st.success("数据刷新成功！")
         except Exception as e:
             logger.exception("Failed to refresh stock data")
             st.error(f"数据刷新失败: {str(e)}")
-            # 显示缓存数据如果有的话
-            if 'stock_data' in st.session_state:
+            # 如果刷新失败，显示缓存数据（如果有）
+            if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
                 st.info("显示上次获取的数据")
 
-# Display the dataframe with only required columns
+# 显示数据框，只显示必要的列
 if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
     display_columns = ["代码", "名称", "最新价", "历史最低", "相对历史低位"]
     st.dataframe(st.session_state.stock_data[display_columns])
