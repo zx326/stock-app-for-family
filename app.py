@@ -62,7 +62,7 @@ def remove_selected_stocks():
     save_stock_symbols(st.session_state.stock_symbols)  # Save to file
 
 # 添加重试装饰器
-def retry_on_failure(max_retries=3, delay=1):
+def retry_on_failure(max_retries=5, delay=2):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -80,7 +80,7 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-@retry_on_failure(max_retries=3, delay=2)
+@retry_on_failure(max_retries=5, delay=3)
 def fetch_stock_data(symbol):
     try:
         # 获取股票基本信息 - 移除headers参数
@@ -98,7 +98,7 @@ def fetch_stock_data(symbol):
                 symbol=symbol, 
                 period="daily", 
                 adjust="qfq",
-                timeout=15  # 增加到15秒超时
+                timeout=20  # 增加到20秒超时
             )
             if not stock_hist.empty:
                 latest_data = stock_hist.iloc[-1]
@@ -152,15 +152,18 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# Simplified data fetching with threading for better performance
+# Optimized data fetching with improved concurrency
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(symbols)
     
+    # Reduce concurrent workers to prevent overwhelming the API
+    max_workers = min(3, len(symbols))  # Reduced from 10 to 3
+    
     # Use ThreadPoolExecutor for concurrent processing
-    with ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol for symbol in symbols}
         
@@ -169,7 +172,7 @@ def get_stock_data_with_progress(symbols):
         for future in as_completed(future_to_symbol):
             symbol = future_to_symbol[future]
             try:
-                result = future.result(timeout=30)  # 30 second timeout per stock
+                result = future.result(timeout=45)  # Increased timeout to 45 seconds per stock
                 data.append(result)
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}")
