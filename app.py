@@ -8,6 +8,8 @@ import requests
 import logging
 from functools import wraps
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -150,33 +152,41 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# Simplified data fetching without threading for better deployment compatibility
+# Simplified data fetching with threading for better performance
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(symbols)
     
-    # Process stocks sequentially instead of using threads
-    for i, symbol in enumerate(symbols):
-        try:
-            result = fetch_stock_data(symbol)
-            data.append(result)
-        except Exception as e:
-            logger.error(f"Error processing {symbol}: {e}")
-            # Add error entry
-            data.append({
-                "代码": symbol,
-                "名称": "处理错误",
-                "最新价": "Error",
-                "历史最低": "Error", 
-                "相对历史低位": "Error"
-            })
+    # Use ThreadPoolExecutor for concurrent processing
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+        # Submit all tasks
+        future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol for symbol in symbols}
         
-        # Update progress
-        progress = (i + 1) / total
-        progress_bar.progress(progress)
-        status_text.text(f"已处理 {i + 1}/{total} 只股票")
+        # Process completed tasks as they finish
+        completed = 0
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                result = future.result(timeout=30)  # 30 second timeout per stock
+                data.append(result)
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
+                # Add error entry
+                data.append({
+                    "代码": symbol,
+                    "名称": "处理错误",
+                    "最新价": "Error",
+                    "历史最低": "Error", 
+                    "相对历史低位": "Error"
+                })
+            
+            # Update progress
+            completed += 1
+            progress = completed / total
+            progress_bar.progress(progress)
+            status_text.text(f"已处理 {completed}/{total} 只股票")
     
     progress_bar.empty()
     status_text.empty()
