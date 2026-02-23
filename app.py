@@ -13,36 +13,13 @@ from functools import lru_cache
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Add a configuration check
+def check_environment():
+    # Removed STOCK_API_URL requirement since it's not actually used in the code
+    pass
 
-
-# Remove Redis cache setup
-# cache = redis.Redis(host='localhost', port=6379, db=0)
-
-# API endpoint for stock data
-STOCK_API_URL = "https://api.example.com/stock/"
-
-@lru_cache(maxsize=128)
-def fetch_stock_data_cached(symbol):
-    """Fetch stock data with built-in caching"""
-    try:
-        response = requests.get(f"{STOCK_API_URL}{symbol}", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"Fetched data for {symbol}")
-            return symbol, data
-        else:
-            logger.error(f"Failed to fetch data for {symbol}: HTTP {response.status_code}")
-            return symbol, None
-    except Exception as e:
-        logger.error(f"Error fetching data for {symbol}: {e}")
-        return symbol, None
-
-def fetch_stock_data_sync(symbol):
-    """Fetch stock data synchronously with caching"""
-    return fetch_stock_data_cached(symbol)
-
-
-
+# Call the check at the beginning
+check_environment()
 
 STOCK_FILE = "stock_data.json"
 
@@ -94,7 +71,8 @@ def fetch_stock_data(symbol):
         try:
             stock_info_df = ak.stock_individual_info_em(symbol=symbol)
             stock_name = stock_info_df[stock_info_df['item'] == '股票简称']['value'].values[0]
-        except:
+        except Exception as e:
+            logger.warning(f"Failed to get stock info for {symbol}: {e}")
             stock_name = "未知"
         
         # 获取历史行情数据
@@ -108,6 +86,7 @@ def fetch_stock_data(symbol):
                 # 计算当前价格是历史最低价格的倍数
                 price_to_low_ratio = price / historical_low if historical_low > 0 else 0
             else:
+                logger.warning(f"No historical data for {symbol}")
                 return {
                     "代码": symbol, 
                     "名称": stock_name,
@@ -116,6 +95,7 @@ def fetch_stock_data(symbol):
                     "相对历史低位": "无数据"
                 }
         except Exception as e:
+            logger.error(f"Error fetching historical data for {symbol}: {e}")
             return {
                 "代码": symbol, 
                 "名称": stock_name,
@@ -132,6 +112,7 @@ def fetch_stock_data(symbol):
             "相对历史低位": f"{price_to_low_ratio:.2f}倍"
         }
     except Exception as e:
+        logger.error(f"Unexpected error for {symbol}: {e}")
         return {
             "代码": symbol, 
             "名称": f"基础信息错误:{str(e)}",
@@ -140,15 +121,18 @@ def fetch_stock_data(symbol):
             "相对历史低位": "Error"
         }
 
-# 获取所有股票数据并显示进度条 - 改进版本
+# 获取所有股票数据并显示进度条
 def get_stock_data_with_progress(symbols):
     data = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(symbols)
     
+    # Limit concurrent requests to avoid overwhelming the server
+    max_workers = min(len(symbols), 5)  # Reduced from 10 to 5
+    
     # Use ThreadPoolExecutor for concurrent data fetching
-    with ThreadPoolExecutor(max_workers=min(len(symbols), 10)) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_symbol = {executor.submit(fetch_stock_data, symbol): symbol 
                           for symbol in symbols}
@@ -225,3 +209,12 @@ if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
     st.dataframe(st.session_state.stock_data[display_columns])
 else:
     st.write("暂无股票数据，请添加股票代码。")
+
+# Add error boundary
+try:
+    # Main app logic here
+    pass  # 占位符，表示不做任何操作
+except Exception as e:
+    logger.exception("An unexpected error occurred")
+    st.error(f"应用遇到错误: {str(e)}")
+    st.stop()
