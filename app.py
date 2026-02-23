@@ -6,6 +6,8 @@ import json
 import os
 import requests
 import logging
+from functools import wraps
+import random
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -57,12 +59,36 @@ def remove_selected_stocks():
         st.session_state.stock_data = pd.DataFrame()
     save_stock_symbols(st.session_state.stock_symbols)  # Save to file
 
-# Remove @st.cache_data decorator for better deployment compatibility
+# 添加重试装饰器
+def retry_on_failure(max_retries=3, delay=1):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(f"Attempt {attempt + 1} failed for {func.__name__}: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(delay * (2 ** attempt) + random.uniform(0, 1))  # 指数退避
+            logger.error(f"All {max_retries} attempts failed for {func.__name__}")
+            raise last_exception
+        return wrapper
+    return decorator
+
+@retry_on_failure(max_retries=3, delay=2)
 def fetch_stock_data(symbol):
     try:
+        # 设置请求头模拟浏览器访问
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
         # 获取股票基本信息
         try:
-            stock_info_df = ak.stock_individual_info_em(symbol=symbol)
+            stock_info_df = ak.stock_individual_info_em(symbol=symbol, headers=headers)
             stock_name = stock_info_df[stock_info_df['item'] == '股票简称']['value'].values[0]
         except Exception as e:
             logger.warning(f"Failed to get stock info for {symbol}: {e}")
@@ -70,7 +96,13 @@ def fetch_stock_data(symbol):
         
         # 获取历史行情数据
         try:
-            stock_hist = ak.stock_zh_a_hist(symbol=symbol, period="daily", adjust="qfq")
+            # 添加超时设置
+            stock_hist = ak.stock_zh_a_hist(
+                symbol=symbol, 
+                period="daily", 
+                adjust="qfq",
+                timeout=10  # 10秒超时
+            )
             if not stock_hist.empty:
                 latest_data = stock_hist.iloc[-1]
                 price = float(latest_data['收盘'])
@@ -184,14 +216,34 @@ st.header("当前监控的股票")
 
 # Get and display stock data
 if st.button("刷新数据") or 'stock_data' not in st.session_state:
-    st.session_state.stock_data = get_stock_data_with_progress(st.session_state.stock_symbols)
+    with st.spinner("正在获取股票数据..."):
+        try:
+            st.session_state.stock_data = get_stock_data_with_progress(st.session_state.stock_symbols)
+            st.success("数据刷新成功！")
+        except Exception as e:
+            logger.exception("Failed to refresh stock data")
+            st.error(f"数据刷新失败: {str(e)}")
+            # 显示缓存数据如果有的话
+            if 'stock_data' in st.session_state:
+                st.info("显示上次获取的数据")
 
 # Display the dataframe with only required columns
 if 'stock_data' in st.session_state and not st.session_state.stock_data.empty:
     display_columns = ["代码", "名称", "最新价", "历史最低", "相对历史低位"]
     st.dataframe(st.session_state.stock_data[display_columns])
+    
+    # 添加数据更新时间
+    st.caption(f"最后更新时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 else:
     st.write("暂无股票数据，请添加股票代码。")
+    # 提供故障排除建议
+    st.info("""
+    **故障排除建议:**
+    1. 检查网络连接是否正常
+    2. 确认股票代码格式正确（如：000001）
+    3. 尝试刷新页面后重新获取数据
+    4. 如果问题持续，请联系管理员
+    """)
 
 # Add error boundary
 try:
